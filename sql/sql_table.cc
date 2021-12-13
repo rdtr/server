@@ -7771,10 +7771,6 @@ static bool mysql_inplace_alter_table(THD *thd,
   }
 
 err:
-  if (partial_alter || start_alter_id)
-    write_bin_log_start_alter_rollback(thd, start_alter_id, partial_alter,
-                                       if_exists);
-
   DBUG_RETURN(true);
 }
 
