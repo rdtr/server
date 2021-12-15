@@ -7323,6 +7323,8 @@ write_bin_log_start_alter_rollback(THD *thd, uint64 &start_alter_id,
   if (start_alter_id)
   {
     start_alter_info *info= thd->rgi_slave->sa_info;
+    Master_info *mi= thd->rgi_slave->rli->mi;
+
     if (info->sa_seq_no == 0)
     {
       /*
@@ -7332,6 +7334,7 @@ write_bin_log_start_alter_rollback(THD *thd, uint64 &start_alter_id,
       */
       return true;
     }
+    mysql_mutex_lock(&mi->start_alter_lock);
     if (info->direct_commit_alter)
     {
       DBUG_ASSERT(info->state == start_alter_state::ROLLBACK_ALTER);
@@ -7343,8 +7346,13 @@ write_bin_log_start_alter_rollback(THD *thd, uint64 &start_alter_id,
         will affect the future of CA to re-execute the whole query.
       */
       info->state= start_alter_state::COMPLETED;
+      if (info->direct_commit_alter)
+        mysql_cond_broadcast(&info->start_alter_cond);
+      mysql_mutex_unlock(&mi->start_alter_lock);
+
       return true; // not really an error to be handled by caller specifically
     }
+    mysql_mutex_unlock(&mi->start_alter_lock);
     /*
       We have to call wait for master here because in main calculation
       we can error out before calling wait for master
@@ -9501,6 +9509,10 @@ static bool wait_for_master(THD *thd)
   DBUG_ASSERT(mi);
 
   mysql_mutex_lock(&mi->start_alter_lock);
+
+  DBUG_ASSERT(!info->direct_commit_alter ||
+              info->state == start_alter_state::ROLLBACK_ALTER);
+
   while (info->state == start_alter_state::REGISTERED)
   {
     mysql_cond_wait(&info->start_alter_cond, &mi->start_alter_lock);
