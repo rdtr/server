@@ -7320,6 +7320,7 @@ static bool
 write_bin_log_start_alter_rollback(THD *thd, uint64 &start_alter_id,
                                    bool &partial_alter, bool if_exists)
 {
+#if defined(HAVE_REPLICATION)
   if (start_alter_id)
   {
     start_alter_info *info= thd->rgi_slave->sa_info;
@@ -7363,7 +7364,9 @@ write_bin_log_start_alter_rollback(THD *thd, uint64 &start_alter_id,
     if(process_master_state(thd, 1, start_alter_id))
       return true;
   }
-  else if (partial_alter) // Write only if SA written
+  else
+#endif
+  if (partial_alter) // Write only if SA written
   {
     // Send the rollback message
     Write_log_with_flags wlwf(thd, Gtid_log_event::FL_ROLLBACK_ALTER_E1);
