@@ -356,8 +356,10 @@ struct ddl_tracker_t {
 	space_id_to_name_t tables_in_backup;
 	/** Drop operations found in redo log. */
 	std::set<space_id_t> drops;
-	/* For DDL operation found in redo log,  */
+	/* For DDL operation found in redo log. */
 	space_id_to_name_t id_to_name;
+	/* Tablespace which're deferred during copy_datafile() */
+	std::set<std::string> deferred_spaces;
 };
 
 static ddl_tracker_t ddl_tracker;
@@ -505,7 +507,6 @@ bool CorruptedPages::empty() const
 }
 
 static void xb_load_single_table_tablespace(const std::string &space_name,
-                                            bool set_size,
                                             ulint defer_space_id=0);
 static void xb_data_files_close();
 static fil_space_t* fil_space_get_by_name(const char* name);
@@ -525,7 +526,7 @@ void CorruptedPages::zero_out_free_pages()
     const std::string &space_name = space_it->second.space_name;
     // There is no need to close tablespaces explixitly as they will be closed
     // in innodb_shutdown().
-    xb_load_single_table_tablespace(space_name, false);
+    xb_load_single_table_tablespace(space_name);
     fil_space_t *space = fil_space_t::get(space_id);
     if (!space)
       die("Can't find space object for space name %s to check corrupted page",
@@ -3234,7 +3235,8 @@ static void xb_load_single_table_tablespace(const char *dirname,
 {
 	ut_ad(srv_operation == SRV_OPERATION_BACKUP
 	      || srv_operation == SRV_OPERATION_RESTORE_DELTA
-	      || srv_operation == SRV_OPERATION_RESTORE);
+	      || srv_operation == SRV_OPERATION_RESTORE
+	      || srv_operation == SRV_OPERATION_BACKUP_NO_DEFER);
 	/* Ignore .isl files on XtraBackup recovery. All tablespaces must be
 	local. */
 	if (is_remote && srv_operation == SRV_OPERATION_RESTORE_DELTA) {
@@ -3303,6 +3305,9 @@ static void xb_load_single_table_tablespace(const char *dirname,
 	}
 
 	if (!defer && file->m_defer) {
+		ddl_tracker.deferred_spaces.insert(
+			filename_to_spacename(
+				file->filepath(), strlen(file->filepath())));
 		delete file;
 		ut_free(name);
 		return;
@@ -3341,7 +3346,6 @@ static void xb_load_single_table_tablespace(const char *dirname,
 }
 
 static void xb_load_single_table_tablespace(const std::string &space_name,
-                                            bool skip_node_page0,
                                             ulint defer_space_id)
 {
   std::string name(space_name);
@@ -3359,7 +3363,7 @@ static void xb_load_single_table_tablespace(const std::string &space_name,
   *p= 0;
   const char *tablename= p + 1;
   xb_load_single_table_tablespace(dbname, tablename, is_remote,
-                                  skip_node_page0, defer_space_id);
+                                  false, defer_space_id);
 }
 
 #ifdef _WIN32
@@ -4785,6 +4789,7 @@ void backup_fix_ddl(CorruptedPages &corrupted_pages)
 		if (ddl_tracker.drops.find(id) != ddl_tracker.drops.end()) {
 			dropped_tables.insert(name);
 			corrupted_pages.drop_space(id);
+			ddl_tracker.deferred_spaces.erase(name);
 			continue;
 		}
 
@@ -4819,6 +4824,7 @@ void backup_fix_ddl(CorruptedPages &corrupted_pages)
 			new_tables[id] = name;
 			if (opt_log_innodb_page_corruption)
 				corrupted_pages.drop_space(id);
+			ddl_tracker.deferred_spaces.erase(name);
 		}
 	}
 
@@ -4859,10 +4865,17 @@ void backup_fix_ddl(CorruptedPages &corrupted_pages)
 
 	DBUG_EXECUTE_IF("check_mdl_lock_works", DBUG_ASSERT(new_tables.size() == 0););
 
+	srv_operation = SRV_OPERATION_BACKUP_NO_DEFER;
+
+	for (auto d : ddl_tracker.deferred_spaces) {
+		xb_load_single_table_tablespace(d, 0);
+	}
+
+	srv_operation = SRV_OPERATION_BACKUP;
+
 	for (const auto &t : new_tables) {
 		if (!check_if_skip_table(t.second.c_str())) {
-			xb_load_single_table_tablespace(t.second, false,
-							t.first);
+			xb_load_single_table_tablespace(t.second, t.first);
 		}
 	}
 
