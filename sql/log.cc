@@ -679,6 +679,8 @@ bool write_bin_log_start_alter(THD *thd, bool& partial_alter,
     if(write_bin_log_with_if_exists(thd, false, false, if_exists, false))
     {
       DBUG_ASSERT(thd->is_error());
+
+      thd->set_binlog_flags_for_alter(0);
       return true;
     }
     partial_alter= true;
