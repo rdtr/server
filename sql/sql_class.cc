@@ -1749,7 +1749,8 @@ THD::~THD()
       So the slave applier thread has to be exempted.
     */
     DBUG_ASSERT(status_var.local_memory_used == 0 ||
-                !debug_assert_on_not_freed_memory || rgi_slave);
+                !debug_assert_on_not_freed_memory ||
+                system_thread == SYSTEM_THREAD_SLAVE_SQL);
   }
   update_global_memory_status(status_var.global_memory_used);
   set_current_thd(orig_thd == this ? 0 : orig_thd);
