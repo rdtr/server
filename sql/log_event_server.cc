@@ -1689,7 +1689,7 @@ int Query_log_event::handle_split_alter_query_log_event(rpl_group_info *rgi,
   if (gtid_flags_extra & Gtid_log_event::FL_START_ALTER_E1)
   {
     //No Slave, Normal Slave, Start Alter under Worker 1 will simple binlog and exit
-    if(!rgi->rpt || rgi->reserved_start_alter_thread)
+    if(!rgi->rpt || rgi->reserved_start_alter_thread || WSREP(thd))
     {
       rc= 1;
       /*
@@ -1699,6 +1699,17 @@ int Query_log_event::handle_split_alter_query_log_event(rpl_group_info *rgi,
       rgi->reserved_start_alter_thread= false;
       Write_log_with_flags wlwf(thd, Gtid_log_event::FL_START_ALTER_E1);
       thd->lex->sql_command= SQLCOM_ALTER_TABLE;
+#ifdef WITH_WSREP
+      if (WSREP(thd))
+      {
+        // if
+             WSREP_TO_ISOLATION_BEGIN_ALTER(db, NULL, NULL, NULL, NULL, NULL)
+           rc= -1;
+        wsrep_to_isolation_end(thd);
+        if (rc == -1)
+          return rc;
+      }
+#endif
       if (write_bin_log(thd, false, thd->query(), thd->query_length()))
         return -1;
 
@@ -1760,6 +1771,10 @@ int Query_log_event::handle_split_alter_query_log_event(rpl_group_info *rgi,
         wait for master reply in mysql_alter_table (in wait_for_master)
       */
       rgi->direct_commit_alter= true;
+#ifdef WITH_WSREP
+      if (WSREP(thd))
+        thd->set_binlog_flags_for_alter(Gtid_log_event::FL_COMMIT_ALTER_E1);
+#endif
       goto cleanup;
     }
     else
@@ -1827,7 +1842,17 @@ write_binlog:
     Write_log_with_flags wlwf(thd, is_CA ? Gtid_log_event::FL_COMMIT_ALTER_E1 :
                               Gtid_log_event::FL_ROLLBACK_ALTER_E1);
     thd->lex->sql_command= SQLCOM_ALTER_TABLE;
-    if (write_bin_log(thd, false, thd->query(), thd->query_length()))
+#ifdef WITH_WSREP
+      if (WSREP(thd))
+      {
+        // if
+             WSREP_TO_ISOLATION_BEGIN_ALTER(db, NULL, NULL, NULL, NULL, NULL)
+           rc= -1;
+        wsrep_to_isolation_end(thd);
+      }
+#endif
+    if (rc != -1 &&
+        write_bin_log(thd, false, thd->query(), thd->query_length()))
       rc= -1;
   }
 

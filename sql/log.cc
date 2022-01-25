@@ -659,7 +659,13 @@ bool write_bin_log_start_alter(THD *thd, bool& partial_alter,
   }
 #endif
 
+#ifndef WITH_WSREP
   rpl_group_info *rgi= thd->rgi_slave ? thd->rgi_slave : thd->rgi_fake;
+#else
+  rpl_group_info *rgi= thd->slave_thread ? thd->rgi_slave :
+    WSREP(thd) ? (thd->wsrep_rgi ? thd->wsrep_rgi : thd->rgi_fake) :
+    thd->rgi_fake;
+#endif
 
   if (!(rgi && rgi->direct_commit_alter) &&
       thd->variables.binlog_alter_two_phase)
